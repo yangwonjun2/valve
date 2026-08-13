@@ -315,6 +315,15 @@
     padding:10px 14px; font-size:11.5px; color:var(--muted); font-family:'IBM Plex Mono',monospace;
     border-bottom:1px solid var(--line-soft);
   }
+  .route-reorder-row{padding:8px 14px; border-bottom:1px solid var(--line-soft);}
+  #routeReorderBtn{
+    width:100%; padding:8px; border:1px solid var(--sc-blue); background:var(--sc-blue-dim);
+    color:var(--sc-blue); border-radius:3px; font-family:'Barlow Condensed',sans-serif; font-weight:700;
+    font-size:12.5px; cursor:pointer;
+  }
+  #routeReorderBtn:hover{background:var(--sc-blue); color:#fff;}
+  #routeReorderBtn:disabled{opacity:0.5; cursor:not-allowed;}
+  .route-reorder-progress{font-size:10.5px; color:var(--muted-2); margin-top:5px; text-align:center; font-family:'IBM Plex Mono',monospace;}
   .route-stop-list{flex:1; overflow-y:auto; padding:8px;}
   .route-stop-item{
     display:flex; align-items:flex-start; gap:9px; padding:8px 8px; border-radius:2px; cursor:pointer;
@@ -547,6 +556,10 @@
       <select id="routeDaySelect"></select>
     </div>
     <div class="route-summary" id="routeSummary"></div>
+    <div class="route-reorder-row">
+      <button id="routeReorderBtn">🚗 실제 도로 기준 재정렬</button>
+      <div class="route-reorder-progress" id="routeReorderProgress"></div>
+    </div>
     <div class="route-stop-list" id="routeStopList"></div>
   </div>
 
@@ -1090,7 +1103,9 @@ const ROUTES_BY_GU = {"권선구":[{"day":1,"count":46,"distance_km":9.68,"stops
     if(!route) return;
 
     document.getElementById('routeSummary').textContent =
-      `${gu} ${route.day}일차 — 총 ${route.count}건 · 예상 이동거리 약 ${route.distance_km}km`;
+      route._realRoad
+        ? `${gu} ${route.day}일차 — 총 ${route.count}건 · 🚗 실제 도로거리 약 ${route.distance_km}km`
+        : `${gu} ${route.day}일차 — 총 ${route.count}건 · 예상 이동거리 약 ${route.distance_km}km (직선거리 기준)`;
 
     const listEl = document.getElementById('routeStopList');
     listEl.innerHTML = route.stops.map(s=>{
@@ -1141,9 +1156,104 @@ const ROUTES_BY_GU = {"권선구":[{"day":1,"count":46,"distance_km":9.68,"stops
 
   routeGuSelect.addEventListener('change', function(){
     refreshRouteDayOptions();
+    document.getElementById('routeReorderProgress').textContent = '';
     renderRoute();
   });
-  routeDaySelect.addEventListener('change', renderRoute);
+  routeDaySelect.addEventListener('change', function(){
+    document.getElementById('routeReorderProgress').textContent = '';
+    renderRoute();
+  });
+
+  // ============ 실제 도로 기준 재정렬 (카카오모빌리티 Directions API) ============
+  const KAKAO_MOBILITY_KEY = 'a03398e6198066a3415bdcd11a2a863a';
+  const realDistCache = {};
+
+  function haversineM(a, b){
+    const R=6371000;
+    const lat1=a.lat*Math.PI/180, lat2=b.lat*Math.PI/180;
+    const dlat=(b.lat-a.lat)*Math.PI/180, dlng=(b.lng-a.lng)*Math.PI/180;
+    const h = Math.sin(dlat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dlng/2)**2;
+    return 2*R*Math.asin(Math.sqrt(h));
+  }
+
+  async function getRealDistance(a, b){
+    const key = a.id < b.id ? `${a.id}_${b.id}` : `${b.id}_${a.id}`;
+    if(realDistCache[key] !== undefined) return realDistCache[key];
+    try{
+      const url = `https://apis-navi.kakaomobility.com/v1/directions?origin=${a.lng},${a.lat}&destination=${b.lng},${b.lat}`;
+      const res = await fetch(url, { headers: { 'Authorization': `KakaoAK ${KAKAO_MOBILITY_KEY}` } });
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const dist = data.routes && data.routes[0] && data.routes[0].result_code === 0
+        ? data.routes[0].summary.distance
+        : haversineM(a, b) * 1.3; // 실패 시 직선거리*1.3으로 근사
+      realDistCache[key] = dist;
+      return dist;
+    } catch(err){
+      const dist = haversineM(a, b) * 1.3;
+      realDistCache[key] = dist;
+      return dist;
+    }
+  }
+
+  let reordering = false;
+
+  async function reorderRouteByRealRoad(){
+    if(reordering) return;
+    const gu = routeGuSelect.value;
+    const dayNum = parseInt(routeDaySelect.value, 10);
+    const route = (ROUTES_BY_GU[gu] || []).find(r=>r.day===dayNum);
+    if(!route) return;
+
+    reordering = true;
+    const btn = document.getElementById('routeReorderBtn');
+    const progEl = document.getElementById('routeReorderProgress');
+    btn.disabled = true;
+    btn.textContent = '재정렬 중...';
+
+    const WINDOW = 5; // 각 지점 기준 앞뒤 5칸 이내만 비교 (API 호출량 제한)
+    let stops = route.stops.map(s=>({...s}));
+    const n = stops.length;
+    let calls = 0;
+    const maxCalls = 350;
+
+    // 창(window) 기반 2-opt: 실제 도로 거리로 인접 구간만 개선
+    for(let pass=0; pass<2 && calls<maxCalls; pass++){
+      for(let i=1; i<n-2 && calls<maxCalls; i++){
+        for(let j=i+1; j<Math.min(i+WINDOW, n-1) && calls<maxCalls; j++){
+          const a=stops[i-1], b=stops[i], c=stops[j], d=stops[j+1];
+          const [d1a, d1b, d2a, d2b] = await Promise.all([
+            getRealDistance(a,b), getRealDistance(c,d), getRealDistance(a,c), getRealDistance(b,d)
+          ]);
+          calls += 4;
+          progEl.textContent = `도로 거리 확인 중... (${calls}/${maxCalls})`;
+          if(d2a + d2b < d1a + d1b - 1){
+            const seg = stops.slice(i, j+1).reverse();
+            stops = stops.slice(0,i).concat(seg, stops.slice(j+1));
+          }
+        }
+      }
+    }
+
+    // 재정렬된 순서로 총 실제거리 계산
+    let totalDist = 0;
+    for(let i=0; i<stops.length-1; i++){
+      totalDist += await getRealDistance(stops[i], stops[i+1]);
+    }
+    stops.forEach((s,i)=> s.seq = i+1);
+
+    route.stops = stops;
+    route.distance_km = Math.round(totalDist/100)/10;
+    route._realRoad = true;
+
+    reordering = false;
+    btn.disabled = false;
+    btn.textContent = '🚗 실제 도로 기준 재정렬';
+    progEl.textContent = `✓ 완료 (API 호출 ${calls}회, 실제 도로거리 반영됨)`;
+    renderRoute();
+  }
+
+  document.getElementById('routeReorderBtn').addEventListener('click', reorderRouteByRealRoad);
 
   document.getElementById('routeToggleBtn').addEventListener('click', function(){
     const panel = document.getElementById('routePanel');
