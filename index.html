@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=580261ea84066c9b31bf8b37eb378fa0&libraries=services,clusterer"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <style>
   :root{
     --bg:#F4F6F7; --panel:#FFFFFF; --panel-2:#F0F2F4; --line:#D8DEE2; --line-soft:#E6EAED;
@@ -380,13 +381,30 @@
     border-radius:3px; font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:12.5px; cursor:pointer;
   }
   .route-remaining-btn:hover{background:var(--sc-blue-dim);}
+  .route-redistribute-row{display:flex; gap:6px; padding:8px 14px; align-items:center;}
+  #routeRedistributeCount{
+    width:92px; flex-shrink:0; padding:9px 8px; border:1px solid var(--line); border-radius:3px;
+    font-family:'IBM Plex Mono',monospace; font-size:12px;
+  }
+  .route-redistribute-btn{
+    flex:1; padding:9px; border:1px solid var(--amber); background:rgba(232,131,15,0.08); color:var(--amber);
+    border-radius:3px; font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:12.5px; cursor:pointer;
+  }
+  .route-redistribute-btn:hover{background:var(--amber); color:#fff;}
+  .route-redistribute-btn:disabled{opacity:0.5; cursor:not-allowed;}
+  .route-redistribute-progress{
+    font-size:10.5px; color:var(--muted-2); padding:0 14px 8px; text-align:center; font-family:'IBM Plex Mono',monospace;
+    border-bottom:1px solid var(--line-soft);
+  }
   .route-stop-checkbox{margin-top:2px; flex-shrink:0;}
   .route-stop-item.completed{opacity:0.45;}
   .route-stop-list{flex:1; overflow-y:auto; padding:8px;}
+  .route-stop-list.dragging{user-select:none;}
   .route-stop-item{
     display:flex; align-items:flex-start; gap:9px; padding:8px 8px; border-radius:2px; cursor:pointer;
   }
   .route-stop-item:hover{background:var(--panel-2);}
+  .route-stop-item.selected{background:rgba(0,86,168,0.10);}
   .route-seq{
     width:22px; height:22px; flex-shrink:0; border-radius:50%; background:var(--blue); color:#fff;
     font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:11.5px;
@@ -494,6 +512,7 @@
     .route-panel.collapsed{height:auto;}
     .route-panel-collapse{font-size:12px; padding:6px 10px;}
     .route-stop-item{padding:11px 8px;}
+    .route-stop-checkbox{width:19px; height:19px; touch-action:none;}
     .route-stop-name{font-size:14px;}
     .route-stop-addr{font-size:12.5px;}
     .route-seq{width:26px; height:26px; font-size:13px;}
@@ -570,6 +589,7 @@
         <div class="fix-sidebar-list" id="fixSidebarList"></div>
         <div class="fix-sidebar-footer">
           <div class="progress-badge" style="margin-bottom:8px; display:block; text-align:center;">보정 완료 <b id="fixDoneCount">0</b> / <span id="fixTotalCount">0</span></div>
+          <button class="export-btn" id="fixExcelBtn" style="margin-bottom:8px; background:#1D7048;">📊 전체 목록 엑셀 다운로드</button>
           <button class="export-btn" id="fixExportBtn">전체 데이터 백업 다운로드</button>
         </div>
       </div>
@@ -588,6 +608,9 @@
 
   <div class="admin-tab-view" id="adminGalleryTab">
     <div class="gallery-wrap">
+      <div class="gallery-toolbar" style="display:flex; justify-content:flex-end; padding:0 0 12px;">
+        <button class="export-btn" id="galleryExcelBtn" style="width:auto; padding:9px 16px; background:#1D7048;">📊 엑셀 다운로드</button>
+      </div>
       <div id="galleryContent"></div>
     </div>
   </div>
@@ -654,6 +677,11 @@
       <select id="routeDaySelect"></select>
     </div>
     <div class="route-summary" id="routeSummary"></div>
+    <div class="route-redistribute-row">
+      <input type="number" id="routeRedistributeCount" min="1" placeholder="일차당 개수">
+      <button class="route-redistribute-btn" id="routeRedistributeBtn">🔁 개수 기준 재분배</button>
+    </div>
+    <div class="route-redistribute-progress" id="routeRedistributeProgress"></div>
     <div class="route-reorder-row">
       <button id="routeReorderBtn">🚗 실제 도로 기준 다시 계산</button>
       <div class="route-reorder-progress" id="routeReorderProgress"></div>
@@ -689,8 +717,7 @@
     </div>
     <button type="button" class="svb-status-btn svb-pending-btn" id="selectedValveBarPendingBtn">↺ 미점검</button>
     <button type="button" class="svb-status-btn svb-good-btn" id="selectedValveBarGoodBtn">✓ 점검완료</button>
-    <button type="button" class="svb-status-btn svb-bad-btn" id="selectedValveBarBadBtn">⚠ 불량처리</button>
-    <button type="button" class="svb-upload-btn" id="selectedValveBarUploadBtn">📷 사진 등록</button>
+    <button type="button" class="svb-upload-btn" id="selectedValveBarUploadBtn">⚠📷 불량처리 / 사진등록</button>
     <button type="button" class="svb-delete-btn" id="selectedValveBarDeleteBtn">🗑 삭제</button>
     <span class="svb-close" id="selectedValveBarClose">&times;</span>
   </div>
@@ -1009,6 +1036,171 @@ const ROUTES_BY_GU = {"권선구":[{"day":1,"count":61,"distance_km":14.25,"stop
     setTimeout(()=>t.classList.remove('show'), 2600);
   }
 
+  // ============ 엑셀(.xlsx) 다운로드 공통 헬퍼 (ExcelJS 기반) ============
+  const THIN_BORDER = { style: 'thin', color: { argb: 'FF000000' } };
+
+  function styleCell(cell, opts){
+    opts = opts || {};
+    cell.font = { name: '맑은 고딕', size: opts.sz || 10, bold: !!opts.bold };
+    cell.alignment = { horizontal: opts.align || 'center', vertical: 'middle', wrapText: !!opts.wrap };
+    if(!opts.noBorder){
+      cell.border = { top: THIN_BORDER, bottom: THIN_BORDER, left: THIN_BORDER, right: THIN_BORDER };
+    }
+    if(opts.fill){
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + opts.fill } };
+    }
+  }
+
+  function sanitizeSheetName(name, usedNames){
+    let clean = (name || '항목').replace(/[\\\/\?\*\[\]:]/g, ' ').trim();
+    if(!clean) clean = '항목';
+    if(clean.length > 28) clean = clean.slice(0, 28);
+    let finalName = clean;
+    let suffix = 2;
+    while(usedNames.has(finalName)){
+      finalName = `${clean}(${suffix})`;
+      suffix++;
+    }
+    usedNames.add(finalName);
+    return finalName;
+  }
+
+  function dataUrlToBase64(dataUrl){
+    const idx = dataUrl.indexOf(',');
+    return dataUrl.slice(idx + 1);
+  }
+  function extFromDataUrl(dataUrl){
+    const m = dataUrl.match(/^data:image\/(png|jpeg|jpg);/);
+    if(!m) return 'png';
+    return m[1] === 'jpg' ? 'jpeg' : m[1];
+  }
+  // 원격 이미지 URL(Supabase Storage 등)을 base64 dataURL로 변환 (엑셀 임베드용)
+  async function fetchImageAsDataUrl(url){
+    try{
+      const res = await fetch(url);
+      if(!res.ok) return null;
+      const blob = await res.blob();
+      return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }catch(err){ return null; }
+  }
+
+  // 밸브 좌표 기준 OSM 타일을 이어붙여 1:1000 축척 위치도 이미지를 만든다 (실패 시 null)
+  const MAP_SCALE = 1000;
+  const MAP_BOX_WIDTH_MM = 178, MAP_BOX_HEIGHT_MM = 105;
+  function mapGroundBbox(){
+    const groundWidthM = (MAP_BOX_WIDTH_MM / 1000) * MAP_SCALE;
+    const groundHeightM = (MAP_BOX_HEIGHT_MM / 1000) * MAP_SCALE;
+    return { groundWidthM, groundHeightM };
+  }
+  async function tryBuildMapImageDataUrl(lat, lon){
+    try{
+      const b = mapGroundBbox();
+      const outWidthPx = 700;
+      const outHeightPx = Math.round(outWidthPx * (b.groundHeightM / b.groundWidthM));
+      const metersPerPixelNeeded = b.groundWidthM / outWidthPx;
+      const latRad = lat * Math.PI / 180;
+
+      let zoom = Math.round(Math.log2(156543.03392 * Math.cos(latRad) / metersPerPixelNeeded));
+      zoom = Math.max(14, Math.min(19, zoom));
+
+      const worldSize = 256 * Math.pow(2, zoom);
+      const centerPxX = (lon + 180) / 360 * worldSize;
+      const centerPxY = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * worldSize;
+
+      const resolution = 156543.03392 * Math.cos(latRad) / Math.pow(2, zoom);
+      const cropWidthPx = b.groundWidthM / resolution;
+      const cropHeightPx = b.groundHeightM / resolution;
+
+      const left = centerPxX - cropWidthPx / 2;
+      const top = centerPxY - cropHeightPx / 2;
+
+      const tileXStart = Math.floor(left / 256);
+      const tileYStart = Math.floor(top / 256);
+      const tileXEnd = Math.floor((left + cropWidthPx) / 256);
+      const tileYEnd = Math.floor((top + cropHeightPx) / 256);
+
+      const bigCanvas = document.createElement('canvas');
+      bigCanvas.width = (tileXEnd - tileXStart + 1) * 256;
+      bigCanvas.height = (tileYEnd - tileYStart + 1) * 256;
+      const bigCtx = bigCanvas.getContext('2d');
+
+      const loads = [];
+      for(let tx = tileXStart; tx <= tileXEnd; tx++){
+        for(let ty = tileYStart; ty <= tileYEnd; ty++){
+          const url = `https://tile.openstreetmap.org/${zoom}/${tx}/${ty}.png`;
+          loads.push(new Promise(resolve => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => { bigCtx.drawImage(img, (tx - tileXStart) * 256, (ty - tileYStart) * 256); resolve(true); };
+            img.onerror = () => resolve(false);
+            img.src = url;
+          }));
+        }
+      }
+      const results = await Promise.all(loads);
+      if(!results.some(Boolean)) return null;
+
+      const cropX = left - tileXStart * 256;
+      const cropY = top - tileYStart * 256;
+      const outCanvas = document.createElement('canvas');
+      outCanvas.width = Math.max(1, Math.round(cropWidthPx));
+      outCanvas.height = Math.max(1, Math.round(cropHeightPx));
+      const outCtx = outCanvas.getContext('2d');
+      outCtx.drawImage(bigCanvas, cropX, cropY, cropWidthPx, cropHeightPx, 0, 0, outCanvas.width, outCanvas.height);
+
+      outCtx.fillStyle = '#e0433d';
+      outCtx.beginPath();
+      outCtx.arc(outCanvas.width / 2, outCanvas.height / 2, 7, 0, Math.PI * 2);
+      outCtx.fill();
+      outCtx.strokeStyle = '#ffffff';
+      outCtx.lineWidth = 2;
+      outCtx.stroke();
+
+      outCtx.font = 'bold 13px sans-serif';
+      outCtx.fillStyle = '#000000';
+      outCtx.textAlign = 'right';
+      outCtx.fillText('축척 1 : 1,000', outCanvas.width - 8, outCanvas.height - 8);
+
+      return outCanvas.toDataURL('image/png');
+    }catch(err){
+      return null;
+    }
+  }
+
+  // 단순 표 형태 엑셀 다운로드 (전체 목록용, 이미지 없음)
+  async function downloadSimpleExcel(filename, sheetName, headers, rows, colWidths){
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet(sheetName);
+    ws.columns = headers.map((h, i) => ({ width: (colWidths && colWidths[i]) || 16 }));
+    headers.forEach((h, ci) => {
+      const cell = ws.getCell(1, ci + 1);
+      styleCell(cell, { bold: true, fill: 'DCE6F1' });
+      cell.value = h;
+    });
+    rows.forEach((row, ri) => {
+      row.forEach((v, ci) => {
+        const cell = ws.getCell(ri + 2, ci + 1);
+        styleCell(cell, { align: 'center' });
+        cell.value = v;
+      });
+    });
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   // ============ 상태 변경을 Supabase에 영구 저장 ============
   function logStatusChange(d, newStatus){
     supabaseClient.from('valve_status').upsert({
@@ -1080,10 +1272,6 @@ const ROUTES_BY_GU = {"권선구":[{"day":1,"count":61,"distance_km":14.25,"stop
     const id = document.getElementById('selectedValveBar').dataset.valveId;
     setValveStatus(id, '점검');
   });
-  document.getElementById('selectedValveBarBadBtn').addEventListener('click', function(){
-    const id = document.getElementById('selectedValveBar').dataset.valveId;
-    setValveStatus(id, '불량');
-  });
   document.getElementById('selectedValveBarUploadBtn').addEventListener('click', function(){
     const id = document.getElementById('selectedValveBar').dataset.valveId;
     const d = DATA.find(x => x.id === id);
@@ -1105,7 +1293,7 @@ const ROUTES_BY_GU = {"권선구":[{"day":1,"count":61,"distance_km":14.25,"stop
     currentPhotoValve = d;
     document.getElementById('photoModalId').textContent = d.id;
     document.getElementById('photoModalName').textContent = d.name;
-    document.getElementById('photoStatus').value = d.status==='불량' ? '불량' : '점검';
+    document.getElementById('photoStatus').value = d.status==='점검' ? '점검' : '불량';
     document.getElementById('photoNote').value = '';
     document.getElementById('photoFile').value = '';
     document.getElementById('photoError').textContent = '';
@@ -1345,7 +1533,7 @@ const ROUTES_BY_GU = {"권선구":[{"day":1,"count":61,"distance_km":14.25,"stop
       const isDone = s.status !== '미점검';
       const isChecked = routeSelectedIds.has(s.id);
       const navUrl = `https://map.kakao.com/link/to/${encodeURIComponent(s.name)},${s.lat},${s.lng}`;
-      return `<div class="route-stop-item ${isBad?'is-bad':''} ${isDone?'completed':''}" data-id="${s.id}" data-lat="${s.lat}" data-lng="${s.lng}">
+      return `<div class="route-stop-item ${isBad?'is-bad':''} ${isDone?'completed':''} ${isChecked?'selected':''}" data-id="${s.id}" data-lat="${s.lat}" data-lng="${s.lng}">
         <input type="checkbox" class="route-stop-checkbox" data-id="${s.id}" ${isChecked?'checked':''}>
         <div class="route-seq">${s.seq}</div>
         <div style="flex:1;">
@@ -1543,6 +1731,187 @@ const ROUTES_BY_GU = {"권선구":[{"day":1,"count":61,"distance_km":14.25,"stop
     routeSelectedIds.clear();
     document.getElementById('routeSelectAll').checked = false;
     ensureRouteOptimized();
+  });
+
+  // ============ 마우스 드래그로 여러 항목 한 번에 선택 ============
+  const routeStopListEl = document.getElementById('routeStopList');
+  let dragSelecting = false;
+  let dragSelectValue = true;
+
+  function applyDragSelect(itemEl){
+    const id = itemEl.dataset.id;
+    if(!id) return;
+    const cb = itemEl.querySelector('.route-stop-checkbox');
+    if(dragSelectValue){
+      routeSelectedIds.add(id);
+      itemEl.classList.add('selected');
+      if(cb) cb.checked = true;
+    } else {
+      routeSelectedIds.delete(id);
+      itemEl.classList.remove('selected');
+      if(cb) cb.checked = false;
+    }
+  }
+
+  routeStopListEl.addEventListener('mousedown', function(e){
+    if(e.button !== 0) return; // 좌클릭만
+    const itemEl = e.target.closest('.route-stop-item');
+    if(!itemEl || e.target.classList.contains('route-nav-link')) return;
+    e.preventDefault(); // 드래그 중 텍스트 선택 방지 (체크박스는 아래에서 직접 반영)
+    dragSelecting = true;
+    routeStopListEl.classList.add('dragging');
+    dragSelectValue = !routeSelectedIds.has(itemEl.dataset.id);
+    applyDragSelect(itemEl);
+    updateRouteBulkBar();
+  });
+
+  routeStopListEl.addEventListener('mouseover', function(e){
+    if(!dragSelecting) return;
+    const itemEl = e.target.closest('.route-stop-item');
+    if(!itemEl) return;
+    applyDragSelect(itemEl);
+    updateRouteBulkBar();
+  });
+
+  document.addEventListener('mouseup', function(){
+    if(!dragSelecting) return;
+    dragSelecting = false;
+    routeStopListEl.classList.remove('dragging');
+    const gu = routeGuSelect.value;
+    const dayNum = parseInt(routeDaySelect.value, 10);
+    const route = (ROUTES_BY_GU[gu] || []).find(r=>r.day===dayNum);
+    if(route){
+      const allSel = route.stops.length > 0 && route.stops.every(s=>routeSelectedIds.has(s.id));
+      document.getElementById('routeSelectAll').checked = allSel;
+    }
+  });
+
+  // ---- 모바일 터치 드래그 선택 ----
+  // 목록 자체는 세로 스크롤이 되어야 하므로, 체크박스를 터치해서 끌 때만 드래그선택 모드로 진입한다.
+  // (행의 나머지 부분을 터치하면 평소처럼 스크롤 + 탭 클릭이 그대로 동작)
+  let touchLastEl = null;
+
+  routeStopListEl.addEventListener('touchstart', function(e){
+    const touch = e.touches[0];
+    const startTarget = document.elementFromPoint(touch.clientX, touch.clientY);
+    if(!startTarget || !startTarget.classList.contains('route-stop-checkbox')) return;
+    const itemEl = startTarget.closest('.route-stop-item');
+    if(!itemEl) return;
+    e.preventDefault(); // 체크박스에서 시작한 터치만 스크롤 막고 드래그선택으로 전환
+    dragSelecting = true;
+    touchLastEl = itemEl;
+    routeStopListEl.classList.add('dragging');
+    dragSelectValue = !routeSelectedIds.has(itemEl.dataset.id);
+    applyDragSelect(itemEl);
+    updateRouteBulkBar();
+  }, { passive: false });
+
+  routeStopListEl.addEventListener('touchmove', function(e){
+    if(!dragSelecting) return;
+    e.preventDefault(); // 드래그선택 중에는 화면 스크롤 방지
+    const touch = e.touches[0];
+    const target = document.elementFromPoint(touch.clientX, touch.clientY);
+    const itemEl = target && target.closest('.route-stop-item');
+    if(!itemEl || itemEl === touchLastEl) return;
+    touchLastEl = itemEl;
+    applyDragSelect(itemEl);
+    updateRouteBulkBar();
+  }, { passive: false });
+
+  function endTouchDragSelect(){
+    if(!dragSelecting) return;
+    dragSelecting = false;
+    touchLastEl = null;
+    routeStopListEl.classList.remove('dragging');
+    const gu = routeGuSelect.value;
+    const dayNum = parseInt(routeDaySelect.value, 10);
+    const route = (ROUTES_BY_GU[gu] || []).find(r=>r.day===dayNum);
+    if(route){
+      const allSel = route.stops.length > 0 && route.stops.every(s=>routeSelectedIds.has(s.id));
+      document.getElementById('routeSelectAll').checked = allSel;
+    }
+  }
+  routeStopListEl.addEventListener('touchend', endTouchDragSelect);
+  routeStopListEl.addEventListener('touchcancel', endTouchDragSelect);
+
+  // ============ 일차별 개수 설정 후 전체 재분배 ============
+  // 선택된 구의 모든 밸브를 (현재 일차/순서 기준으로) 한 줄로 펼친 뒤,
+  // 입력한 개수 단위로 다시 잘라 새 일차를 구성하고, 각 일차는 실제 도로 기준으로 재계산합니다.
+  document.getElementById('routeRedistributeBtn').addEventListener('click', async function(){
+    const gu = routeGuSelect.value;
+    const routes = ROUTES_BY_GU[gu];
+    if(!routes || !routes.length) return;
+
+    const countInput = document.getElementById('routeRedistributeCount');
+    const perDay = parseInt(countInput.value, 10);
+    if(isNaN(perDay) || perDay < 1){
+      showToast('일차당 개수를 1 이상으로 입력해주세요.');
+      return;
+    }
+
+    // 기존 일차/순서 순서 그대로 전체를 한 줄로 펼침 (기존 클러스터링을 최대한 유지)
+    const allStops = [];
+    routes.forEach(r => r.stops.forEach(s => allStops.push(s)));
+    if(allStops.length === 0) return;
+
+    const chunks = [];
+    for(let i = 0; i < allStops.length; i += perDay){
+      chunks.push(allStops.slice(i, i + perDay));
+    }
+
+    const btn = this;
+    btn.disabled = true;
+    const progEl = document.getElementById('routeRedistributeProgress');
+
+    const newRoutes = [];
+    for(let i = 0; i < chunks.length; i++){
+      const chunk = chunks[i];
+      progEl.textContent = `재분배 중... ${i+1}/${chunks.length}일차 (${chunk.length}건) 경로 계산 중`;
+      btn.textContent = `계산 중... (${i+1}/${chunks.length})`;
+
+      if(chunk.length >= 2){
+        const tempRoute = { stops: chunk };
+        const result = await computeFullRouteData(tempRoute, progEl);
+        newRoutes.push({
+          day: i + 1,
+          count: result.stops.length,
+          distance_km: result.distance_km,
+          stops: result.stops,
+          _realRoad: true,
+          _isPartial: false,
+          _pathSegments: result.path_segments,
+          _turnGuides: result.turn_guides || []
+        });
+      } else {
+        chunk.forEach((s, idx) => s.seq = idx + 1);
+        newRoutes.push({
+          day: i + 1,
+          count: chunk.length,
+          distance_km: 0,
+          stops: chunk,
+          _realRoad: true,
+          _isPartial: false,
+          _pathSegments: [],
+          _turnGuides: []
+        });
+      }
+    }
+
+    ROUTES_BY_GU[gu] = newRoutes;
+    routeSelectedIds.clear();
+    document.getElementById('routeSelectAll').checked = false;
+
+    // 구 선택 옵션의 총 건수 표시 갱신
+    Array.from(routeGuSelect.options).forEach(o=>{
+      if(o.value === gu) o.textContent = `${gu} (${newRoutes.reduce((a,r)=>a+r.count,0)}건)`;
+    });
+    refreshRouteDayOptions();
+    routeDaySelect.value = '1';
+
+    btn.disabled = false;
+    btn.textContent = '🔁 개수 기준 재분배';
+    progEl.textContent = `✓ ${gu} 전체 ${allStops.length}건을 ${newRoutes.length}개 일차(일차당 최대 ${perDay}건)로 재분배 완료 — 이 재분배는 저장되지 않고 현재 화면에만 적용됩니다.`;
+    renderRoute();
   });
 
   // ============ 실제 도로 기준 경로 (카카오모빌리티 Directions API + Supabase 캐시) ============
@@ -2027,8 +2396,33 @@ const ROUTES_BY_GU = {"권선구":[{"day":1,"count":61,"distance_km":14.25,"stop
     showToast('✓ 현재 전체 데이터를 백업 파일로 다운로드했습니다.');
   });
 
+  document.getElementById('fixExcelBtn').addEventListener('click', async function(){
+    const btn = this;
+    const originalLabel = btn.innerHTML;
+    btn.innerHTML = '엑셀 생성 중...';
+    btn.disabled = true;
+    try{
+      const headers = ['연번', '관리번호', '시설명', '구', '동', '지번주소', '상태', '위도', '경도'];
+      const rows = DATA.map((d, i) => [i + 1, d.id, d.name, d.gu, d.dong, d.addr || '', d.status, d.lat, d.lng]);
+      await downloadSimpleExcel(
+        `노출밸브_전체목록_${new Date().toISOString().slice(0,10)}.xlsx`,
+        '전체목록',
+        headers,
+        rows,
+        [6, 12, 28, 10, 12, 16, 8, 12, 12]
+      );
+      showToast('✓ 전체 목록을 엑셀 파일로 다운로드했습니다.');
+    }catch(err){
+      showToast('⚠ 엑셀 생성 중 문제가 발생했습니다.');
+    }finally{
+      btn.innerHTML = originalLabel;
+      btn.disabled = false;
+    }
+  });
+
   // ---- 부적합 사진함 (Supabase) ----
   let galleryLoaded = false;
+  let currentGallerySubmissions = [];
 
   function tryLoadGallery(){
     if(galleryLoaded) return;
@@ -2049,12 +2443,206 @@ const ROUTES_BY_GU = {"권선구":[{"day":1,"count":61,"distance_km":14.25,"stop
       content.innerHTML = `<div class="gallery-status">불러오기 실패: ${error.message}</div>`;
       return;
     }
+    currentGallerySubmissions = submissions || [];
     if(!submissions || submissions.length === 0){
       content.innerHTML = '<div class="gallery-status">아직 등록된 부적합 사진이 없습니다.</div>';
       return;
     }
     content.innerHTML = `<div class="gallery-grid">${submissions.map(renderGalleryCard).join('')}</div>`;
   }
+
+  // 부적합 사진함 요약 목록 시트 (구별 → 상태별 그룹, 참고 사이트의 지역/요청사항 그룹 구조와 동일한 방식)
+  function buildGalleryListSheet(ws, guGroups){
+    const COLS = 6;
+    const headers = ['순번', '관리번호', '시설명', '주소', '상태', '특이사항'];
+    ws.columns = [{ width: 6 }, { width: 13 }, { width: 26 }, { width: 34 }, { width: 8 }, { width: 24 }];
+    let r = 1;
+    const orderedSubs = [];
+    const seqMap = new Map();
+
+    guGroups.forEach(guGroup => {
+      ws.mergeCells(r, 1, r, COLS);
+      styleCell(ws.getCell(r, 1), { bold: true, sz: 13, align: 'left', noBorder: true });
+      ws.getCell(r, 1).value = `★${guGroup.gu}★`;
+      r++;
+
+      guGroup.statusGroups.forEach(group => {
+        ws.mergeCells(r, 1, r, 2);
+        styleCell(ws.getCell(r, 1), { bold: true, align: 'left', sz: 10, fill: 'F2F2F2' });
+        ws.getCell(r, 1).value = `▶ ${group.status} (${group.rows.length}건)`;
+        for(let ci = 2; ci < COLS; ci++){ styleCell(ws.getCell(r, ci + 1), { align: 'center' }); ws.getCell(r, ci + 1).value = ''; }
+        r++;
+      });
+
+      headers.forEach((h, ci) => {
+        const cell = ws.getCell(r, ci + 1);
+        styleCell(cell, { bold: true, fill: 'DCE6F1' });
+        cell.value = h;
+      });
+      r++;
+
+      let seq = 1;
+      guGroup.statusGroups.forEach(group => {
+        group.rows.forEach(sub => {
+          const thisSeq = seq++;
+          orderedSubs.push(sub);
+          seqMap.set(sub, thisSeq);
+          const time = sub.created_at ? new Date(sub.created_at).toLocaleString('ko-KR') : '';
+          const vals = [thisSeq, sub.valve_id || '', sub.valve_name || '', sub.valve_addr || '', sub.status || '', sub.note || ''];
+          vals.forEach((v, ci) => {
+            const cell = ws.getCell(r, ci + 1);
+            styleCell(cell, { align: 'center' });
+            cell.value = v;
+          });
+          r++;
+        });
+      });
+      r++; // 구 섹션 사이 여백 행
+    });
+
+    return { orderedSubs, seqMap };
+  }
+
+  // 부적합 항목 개별 시트: 위치도(밸브 좌표 기반 지도 스냅샷) + 현장사진(등록된 부적합 사진) 임베드
+  async function buildGalleryDetailSheet(workbook, ws, sub, valveInfo){
+    const COLS = 4;
+    ws.columns = [{ width: 12 }, { width: 26 }, { width: 12 }, { width: 26 }];
+    let r = 1;
+
+    function setCell(row, col, value, opts){
+      const cell = ws.getCell(row, col);
+      styleCell(cell, opts);
+      cell.value = value;
+    }
+    const labelCell = (row, col, text) => setCell(row, col, text, { bold: true, fill: 'DCE6F1' });
+    const valueCell = (row, col, text) => setCell(row, col, text || '', { align: 'center' });
+
+    ws.mergeCells(r, 1, r, COLS);
+    setCell(r, 1, '위  치  도', { bold: true, sz: 13, align: 'center' });
+    r++;
+
+    labelCell(r, 1, '관리번호'); valueCell(r, 2, sub.valve_id);
+    labelCell(r, 3, '시설명');   valueCell(r, 4, sub.valve_name);
+    r++;
+
+    labelCell(r, 1, '주소'); valueCell(r, 2, sub.valve_addr);
+    labelCell(r, 3, '상태'); valueCell(r, 4, sub.status);
+    r++;
+
+    labelCell(r, 1, '등록일시');
+    ws.mergeCells(r, 2, r, COLS);
+    setCell(r, 2, sub.created_at ? new Date(sub.created_at).toLocaleString('ko-KR') : '', { align: 'center' });
+    r++;
+
+    labelCell(r, 1, '특이사항');
+    ws.mergeCells(r, 2, r, COLS);
+    setCell(r, 2, sub.note || '', { align: 'center' });
+    r++;
+
+    // 위치도: 밸브 좌표가 있으면 OSM 스냅샷 시도, 실패 시 텍스트로 대체
+    let mapImgDataUrl = null;
+    if(valveInfo && valveInfo.lat && valveInfo.lng){
+      mapImgDataUrl = await tryBuildMapImageDataUrl(valveInfo.lat, valveInfo.lng);
+    }
+    if(mapImgDataUrl){
+      const mapRowStart = r, mapRowSpan = 14;
+      ws.mergeCells(mapRowStart, 1, mapRowStart + mapRowSpan - 1, COLS);
+      ws.getCell(mapRowStart, 1).border = { top: THIN_BORDER, bottom: THIN_BORDER, left: THIN_BORDER, right: THIN_BORDER };
+      const imgId = workbook.addImage({ base64: dataUrlToBase64(mapImgDataUrl), extension: extFromDataUrl(mapImgDataUrl) });
+      ws.addImage(imgId, { tl: { col: 0, row: mapRowStart - 1 }, br: { col: COLS, row: mapRowStart - 1 + mapRowSpan } });
+      r += mapRowSpan;
+    } else {
+      labelCell(r, 1, '위치정보');
+      ws.mergeCells(r, 2, r, COLS);
+      const locText = (valveInfo && valveInfo.lat) ? `위도 ${valveInfo.lat}, 경도 ${valveInfo.lng} (지도 이미지를 불러오지 못했어요)` : '위치 정보 없음';
+      setCell(r, 2, locText, { align: 'center' });
+      r++;
+    }
+    r++;
+
+    ws.mergeCells(r, 1, r, 2);
+    setCell(r, 1, '현  장  사  진', { bold: true, sz: 13, align: 'center' });
+    labelCell(r, 3, '촬영일');
+    valueCell(r, 4, sub.created_at ? new Date(sub.created_at).toLocaleDateString('ko-KR') : '');
+    r++;
+
+    const photoDataUrl = sub.photo_url ? await fetchImageAsDataUrl(sub.photo_url) : null;
+    if(photoDataUrl){
+      const photoRowStart = r, photoRowSpan = 14;
+      ws.mergeCells(photoRowStart, 1, photoRowStart + photoRowSpan - 1, COLS);
+      ws.getCell(photoRowStart, 1).border = { top: THIN_BORDER, bottom: THIN_BORDER, left: THIN_BORDER, right: THIN_BORDER };
+      try{
+        const imgId = workbook.addImage({ base64: dataUrlToBase64(photoDataUrl), extension: extFromDataUrl(photoDataUrl) });
+        ws.addImage(imgId, { tl: { col: 0, row: photoRowStart - 1 }, br: { col: COLS, row: photoRowStart - 1 + photoRowSpan } });
+      }catch(err){ /* 이미지 임베드 실패 시 건너뜀 */ }
+      r += photoRowSpan;
+    } else {
+      ws.mergeCells(r, 1, r, COLS);
+      setCell(r, 1, '등록된 현장사진을 불러오지 못했습니다', { align: 'center' });
+      r++;
+    }
+  }
+
+  document.getElementById('galleryExcelBtn').addEventListener('click', async function(){
+    if(!currentGallerySubmissions || currentGallerySubmissions.length === 0){
+      showToast('다운로드할 부적합 사진 등록 내역이 없습니다.');
+      return;
+    }
+    const btn = this;
+    const originalLabel = btn.innerHTML;
+    btn.disabled = true;
+
+    try{
+      const dataById = {};
+      DATA.forEach(d => dataById[d.id] = d);
+
+      // 구별 → 상태별 그룹핑
+      const guOrder = [];
+      const guMap = {};
+      currentGallerySubmissions.forEach(sub => {
+        const gu = (sub.valve_addr || '').trim().split(/\s+/)[0] || '(구 미상)';
+        if(!guMap[gu]){ guMap[gu] = { gu, statusMap: {}, statusOrder: [] }; guOrder.push(gu); }
+        const g = guMap[gu];
+        const status = sub.status || '(상태 없음)';
+        if(!g.statusMap[status]){ g.statusMap[status] = []; g.statusOrder.push(status); }
+        g.statusMap[status].push(sub);
+      });
+      const guGroups = guOrder.map(gu => ({
+        gu,
+        statusGroups: guMap[gu].statusOrder.map(status => ({ status, rows: guMap[gu].statusMap[status] }))
+      }));
+
+      const workbook = new ExcelJS.Workbook();
+      const listSheet = workbook.addWorksheet('부적합목록');
+      const { orderedSubs, seqMap } = buildGalleryListSheet(listSheet, guGroups);
+
+      const usedNames = new Set(['부적합목록']);
+      for(let i = 0; i < orderedSubs.length; i++){
+        btn.innerHTML = `엑셀 생성 중... (${i + 1}/${orderedSubs.length})`;
+        const sub = orderedSubs[i];
+        const sheetName = sanitizeSheetName(String(seqMap.get(sub)), usedNames);
+        const sheet = workbook.addWorksheet(sheetName);
+        await buildGalleryDetailSheet(workbook, sheet, sub, dataById[sub.valve_id]);
+      }
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `부적합사진함_${new Date().toISOString().slice(0,10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast('✓ 부적합 사진함 목록을 엑셀 파일로 다운로드했습니다.');
+    }catch(err){
+      showToast('⚠ 엑셀 생성 중 문제가 발생했습니다: ' + err.message);
+    }finally{
+      btn.innerHTML = originalLabel;
+      btn.disabled = false;
+    }
+  });
 
   function renderGalleryCard(sub){
     const isBad = sub.status === '불량';
